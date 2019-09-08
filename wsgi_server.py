@@ -9,9 +9,6 @@ import logging
 import selectors
 import socket
 import sys
-import threading
-import time
-import wsgiref
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -143,6 +140,7 @@ class WSGIServer:
         host, self.server_port, *_ = self.listening_socket.getsockname()
         self.server_name = socket.getfqdn(host)
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+        self._selector = selectors.DefaultSelector()
         self._application = None
 
     def get_app(self):
@@ -152,15 +150,14 @@ class WSGIServer:
         self._application = application
 
     def serve_forever(self):
-        with selectors.DefaultSelector() as selector:
-            selector.register(
-                self.listening_socket, selectors.EVENT_READ, self.handle_request
-            )
+        self._selector.register(
+            self.listening_socket, selectors.EVENT_READ, self.handle_request
+        )
 
-            while True:
-                for key, mask in selector.select(timeout=1):
-                    callback = key.data
-                    callback(key.fileobj, mask)
+        while True:
+            for key, mask in self._selector.select(timeout=1):
+                callback = key.data
+                callback(key.fileobj, mask)
 
     def get_environ(self):
         env = {}
@@ -186,10 +183,8 @@ class WSGIServer:
         return env
 
     def process_request_thread(self, client_conn, client_address):
-        try:
-            self.finish_request(client_conn, client_address)
-        finally:
-            self.shutdown_request(client_conn)
+        self.finish_request(client_conn, client_address)
+        self.shutdown_request(client_conn)
 
     def process_request(self, client_conn, client_address):
         self.executor.submit(self.process_request_thread, client_conn, client_address)
@@ -201,19 +196,21 @@ class WSGIServer:
         self.close_request(client_conn)
 
     def close_request(self, client_conn: socket.socket):
+        self._selector.unregister(client_conn)
         client_conn.close()
 
     def handle_request(self, sock, mask):
-        client_socket, address = self.listening_socket.accept()
+        client_socket, client_address = self.listening_socket.accept()
         client_socket.settimeout(200)
-        client_socket.setblocking(False)
-        self.process_request(client_socket, address)
+        self.process_request(client_socket, client_address)
 
     def close_server(self):
+        self._selector.unregister(self.listening_socket)
+        self._selector.close()
         self.executor.shutdown(wait=True)
         self.listening_socket.close()
 
-    def __exit__(self):
+    def __exit__(self, exc_type, exc_value, exc_traceback):
         self.close_server()
 
     def __enter__(self):

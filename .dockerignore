@@ -1,0 +1,8 @@
+/venv
+*.log
+__pycache__
+*.py[cod]
+.gitignore
+/.vscode
+*.txt
+/scripts
