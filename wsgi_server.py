@@ -186,7 +186,7 @@ class WSGIServer:
         self.finish_request(client_conn, client_address)
         self.shutdown_request(client_conn)
 
-    def process_request(self, client_conn, client_address):
+    def process_request(self, client_conn, mask, client_address):
         self.executor.submit(self.process_request_thread, client_conn, client_address)
 
     def finish_request(self, client_conn, client_address):
@@ -202,7 +202,12 @@ class WSGIServer:
     def handle_request(self, sock, mask):
         client_socket, client_address = self.listening_socket.accept()
         client_socket.settimeout(200)
-        self.process_request(client_socket, client_address)
+        client_socket.setblocking(False)
+        self._selector.register(
+            client_socket,
+            selectors.EVENT_READ,
+            lambda sock, mask: self.process_request(sock, mask, client_address),
+        )
 
     def close_server(self):
         self._selector.unregister(self.listening_socket)
