@@ -56,6 +56,9 @@ class WSGIRequestHandler:
     def handle(self, request, application):
         req_data = request.recv(1024)
 
+        if not req_data:
+            return
+
         self.data = req_data.decode("utf-8")
         self.method, self.path, self.http_version = self.parse_request(self.data)
         self.headers = self.parse_headers(self.data)
@@ -196,7 +199,6 @@ class WSGIServer:
         self.close_request(client_conn)
 
     def close_request(self, client_conn: socket.socket):
-        self._selector.unregister(client_conn)
         client_conn.close()
 
     def handle_request(self, sock, mask):

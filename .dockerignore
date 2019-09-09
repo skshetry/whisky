@@ -1,8 +1,4 @@
-/venv
-*.log
-__pycache__
-*.py[cod]
-.gitignore
-/.vscode
-*.txt
-/scripts
+*
+!test_wsgi.py
+!wsgi_server.py
+!wsgi_app.py
