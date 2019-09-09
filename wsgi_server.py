@@ -27,8 +27,10 @@ class WSGIRequestHandler:
             raise TypeError(
                 "The wsgi app specified %s is not a valid WSGI application.", str(app)
             )
-
-        self.handle(request, app)
+        try:
+            self.handle(request, app)
+        except Exception as exc_info:
+            logger.exception("Oops.", exc_info=exc_info)
 
     def get_environ(self):
         env = self.server.get_environ().copy()
