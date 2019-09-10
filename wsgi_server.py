@@ -44,7 +44,6 @@ class WSGIRequestHandler:
             env["PATH_INFO"] = self.path
 
         for key, value in self.headers:
-            key: str = key
             env[str("HTTP_" + key.replace("-", "_").upper())] = value
 
         if "HTTP_CONTENT_LENGTH" in env:
@@ -228,7 +227,7 @@ class WSGIServer:
         return self
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "application",
@@ -276,3 +275,7 @@ if __name__ == "__main__":
         print()  # print log on next line of ^C
         logger.warning("Closing server ...")
         httpd.close_server()
+
+
+if __name__ == "__main__":
+    main()
