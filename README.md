@@ -1,7 +1,7 @@
 ## Whisky
 Multithreaded, WSGI-compatible web server with zero dependencies. *Just for Fun*.
 
-Work In Progress.
+Work In Progress. Check [projects](https://github.com/skshetry/whisky/projects/1) for remaining tasks.
 
 ## Installation
     $ pip install git+https://github.com/skshetry/whisky.git
