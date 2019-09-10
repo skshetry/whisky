@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 import pathlib
+
 from setuptools import setup
+
+from wsgi_server import __version__ as VERSION
 
 # Package meta-data.
 NAME = "whisky"
@@ -8,7 +11,7 @@ DESCRIPTION = "Multithreaded, WSGI-web server with zero dependencies."
 URL = "https://github.com/skshetry/whisky"
 AUTHOR = "skshetry"
 REQUIRES_PYTHON = ">=3.6.0"
-VERSION = "0.1.0"
+
 
 with pathlib.Path("README.md").open() as f:
     long_description = "\n" + f.read()

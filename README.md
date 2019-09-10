@@ -23,7 +23,7 @@ Open up http://localhost:8000. If it works, you are good to go.
 
 ### Available Options:
 
-    usage: whisky [-h] [-d] [-b BIND] [-p PORT] [--workers WORKERS] application
+    usage: whisky [-h] [-d] [-b BIND] [-p PORT] [--workers WORKERS] [-v] application
 
     positional arguments:
         application           wsgi application in the form module:callable,
@@ -35,6 +35,7 @@ Open up http://localhost:8000. If it works, you are good to go.
         -b BIND, --bind BIND  Specify alternate bind address
         -p PORT, --port PORT  Specify alternate port [default: 8000]
         --workers WORKERS     No. of threads to handle requests
+        -v, --version         Version information
 
 ## Development
 1. Clone this repo.

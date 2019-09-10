@@ -10,6 +10,8 @@ import selectors
 import socket
 import sys
 
+__version__ = "0.1.1"
+
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 DEFAULT_PORT = 8000
@@ -62,9 +64,7 @@ class WSGIRequestHandler:
 
         raw_data = req_data.decode("utf-8")
 
-        self.method, self.path, self.http_version = self.parse_request(raw_data)
-        self.headers = self.parse_headers(raw_data)
-        self.data = self.parse_data(raw_data)
+        self.parse_request(raw_data)
 
         logger.debug("".join(f"< {line}\n" for line in req_data.splitlines()))
 
@@ -88,30 +88,28 @@ class WSGIRequestHandler:
         )
 
     def parse_request(self, req):
-        request_line = req.splitlines()[0]
-        return request_line.rstrip("\r\n").split()
+        lines = req.splitlines()
+        request_line = lines[0]
 
-    def parse_headers(self, req):
-        # only get headers in format "Key: Value", also removes GET /index HTTP/1.1
-        raw_headers = filter(lambda line: ":" in line, req.splitlines())
+        self.method, self.path, self.http_version = request_line.rstrip("\r\n").split()
 
-        return (
-            # remove whitespaces and split based on ":" (colon)
-            header.strip().replace(" ", "").split(":", 1)
-            for header in raw_headers
-        )
+        self.headers = []
+        pos = 1
+        while True:
+            line = lines[pos]
+            pos += 1
+            if ":" not in line:
+                break
+            self.headers.append(line.strip().replace(" ", "").split(":", 1))
 
-    def parse_data(self, req):
-        # only get data, also removes first requestline GET /index HTTP/1.1
-        data_parts = filter(lambda line: ":" not in line, req.splitlines()[1:])
-        return "".join(data.strip() for data in data_parts)
+        self.data = "".join(line.strip() for line in lines[pos:])
 
     def start_response(self, status, response_headers, exc_info=None):
         self.datetime = datetime.datetime.now(tz=datetime.timezone.utc).strftime(
-            "%a, %d %b %Y %T.%f %Z"
+            "%a, %d %b %Y %T GMT"
         )
 
-        server_headers = [("Date", self.datetime), ("Server", "WSGIServer 0.2")]
+        server_headers = [("Date", self.datetime), ("Server", f"whisky/{__version__}")]
         self.headers_set = [status, response_headers + server_headers]
 
         return lambda data: logger.warning(
@@ -253,6 +251,13 @@ def main():
         help="No. of threads to handle requests",
         default=DEFAULT_WORKERS,
         type=int,
+    )
+    parser.add_argument(
+        "-v",
+        "--version",
+        help="Version information",
+        action="version",
+        version=f"whisky/v{__version__}",
     )
 
     args = parser.parse_args()
