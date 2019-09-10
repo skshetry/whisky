@@ -123,9 +123,13 @@ class WSGIRequestHandler:
         response = f"HTTP/1.1 {self.status}\r\n"
         for header in response_headers:
             response += "{0}: {1}\r\n".format(*header)
+
+        message_body = "".join(data.decode("utf-8") for data in result)
+
+        response += "Content-Length: {}\r\n".format(len(message_body))
         response += "\r\n"
-        for data in result:
-            response += data.decode("utf-8")
+        response += message_body
+
         logger.debug("".join(f"> {line}\n" for line in response.splitlines()))
         response_bytes = response.encode()
         request.sendall(response_bytes)
