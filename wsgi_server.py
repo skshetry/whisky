@@ -61,9 +61,11 @@ class WSGIRequestHandler:
         if not req_data:
             return
 
-        self.data = req_data.decode("utf-8")
-        self.method, self.path, self.http_version = self.parse_request(self.data)
-        self.headers = self.parse_headers(self.data)
+        raw_data = req_data.decode("utf-8")
+
+        self.method, self.path, self.http_version = self.parse_request(raw_data)
+        self.headers = self.parse_headers(raw_data)
+        self.data = self.parse_data(raw_data)
 
         logger.debug("".join(f"< {line}\n" for line in req_data.splitlines()))
 
@@ -99,6 +101,11 @@ class WSGIRequestHandler:
             header.strip().replace(" ", "").split(":", 1)
             for header in raw_headers
         )
+
+    def parse_data(self, req):
+        # only get data, also removes first requestline GET /index HTTP/1.1
+        data_parts = filter(lambda line: ":" not in line, req.splitlines()[1:])
+        return "".join(data.strip() for data in data_parts)
 
     def start_response(self, status, response_headers, exc_info=None):
         self.datetime = datetime.datetime.now(tz=datetime.timezone.utc).strftime(
