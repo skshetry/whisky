@@ -46,3 +46,21 @@ Open up http://localhost:8000. If it works, you are good to go.
 
 Currently, the server is tested with the bundled app and `flaskr` app, and is compared
 with `wsgiref` as reference.
+
+## Benchmarking/Testing
+1. Run server on docker to avoid taking down development machine.
+    `./scripts/debug.sh`
+    This runs bundled [app](./wsgi_app.py) on http://localhost:8000 (can be changed through `HTTP_PORT` env variable).
+    Container is set to use 500MB memory at max.
+
+2. Run benchmarking tool (`vegeta`) using `./scripts/benchmark.sh`.
+
+    Available environment variables:
+        
+        ATTACK_RATE     (default: "100/s")
+        ATTACK_DURATION (default: "60s")
+        ATTACK_URL      (default: "http://:8000")
+        ATTACK_METHOD   (default: "GET")
+
+    Refer to [script](./scripts/benchmark.sh) and [Vegeta](https://github.com/tsenart/vegeta)
+    for more information.
