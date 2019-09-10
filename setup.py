@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import pathlib
 from setuptools import setup
 
 # Package meta-data.
@@ -9,12 +10,16 @@ AUTHOR = "skshetry"
 REQUIRES_PYTHON = ">=3.6.0"
 VERSION = "0.1.0"
 
+with pathlib.Path("README.md").open() as f:
+    long_description = '\n' + f.read()
+
 # Where the magic happens:
 setup(
     name=NAME,
     version=VERSION,
     description=DESCRIPTION,
-    long_description=DESCRIPTION,
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     author=AUTHOR,
     python_requires=REQUIRES_PYTHON,
     url=URL,
