@@ -29,16 +29,13 @@ class WSGIRequestHandler:
             raise TypeError(
                 "The wsgi app specified %s is not a valid WSGI application.", str(app)
             )
-        try:
-            self.handle(request, app)
-        except Exception as exc_info:
-            logger.exception("Oops.", exc_info=exc_info)
+        self.handle(request, app)
 
     def get_environ(self):
         env = self.server.get_environ().copy()
         env["REQUEST_METHOD"] = self.method
         env["SERVER_PROTOCOL"] = self.http_version
-        env["wsgi.input"] = io.StringIO(self.data)
+        env["wsgi.input"] = io.BytesIO(self.data)
 
         if "?" in self.path:
             env["PATH_INFO"], env["QUERY_STRING"] = self.path.split("?", 1)
@@ -74,6 +71,22 @@ class WSGIRequestHandler:
             res = env["SERVER_PROTOCOL"] + " 100 Continue\r\n\r\n"
             request.sendall(res.encode())
 
+        if env.get("CONTENT_LENGTH"):
+            size = int(env.get("CONTENT_LENGTH", "0")) - len(self.data)
+            parts = [1024] * (size // 1024) + [size % 1024]
+
+            # size % 1024 might be zero, remove if it is
+            parts = parts[:-1] if parts[-1] == 0 else parts
+
+            logger.debug("Receiving data of size {0} in parts {1}".format(size, parts))
+
+            for part in parts:
+                packet = request.recv(part)
+                if not packet:
+                    break
+                env["wsgi.input"].write(packet)
+            env["wsgi.input"].seek(0)
+
         result = application(env, self.start_response)
         self.finish_response(result, request)
 
@@ -102,7 +115,7 @@ class WSGIRequestHandler:
                 break
             self.headers.append(line.strip().replace(" ", "").split(":", 1))
 
-        self.data = "".join(line.strip() for line in lines[pos:])
+        self.data = "".join(line.strip() for line in lines[pos:]).encode()
 
     def start_response(self, status, response_headers, exc_info=None):
         self.datetime = datetime.datetime.now(tz=datetime.timezone.utc).strftime(
@@ -196,8 +209,11 @@ class WSGIServer:
         return env
 
     def process_request_thread(self, client_conn, client_address):
-        self.finish_request(client_conn, client_address)
-        self.shutdown_request(client_conn)
+        try:
+            self.finish_request(client_conn, client_address)
+            self.shutdown_request(client_conn)
+        except Exception as exc_info:
+            logger.exception("Oops.", exc_info=exc_info)
 
     def process_request(self, client_conn, client_address):
         self.executor.submit(self.process_request_thread, client_conn, client_address)
