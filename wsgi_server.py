@@ -9,6 +9,8 @@ import logging
 import selectors
 import socket
 import sys
+from collections import OrderedDict
+from http import HTTPStatus
 
 __version__ = "0.1.1"
 
@@ -16,6 +18,14 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 DEFAULT_PORT = 8000
 DEFAULT_WORKERS = 4
+CRLF = "\r\n"
+
+acceptable_encodings = ["gzip", "identity"]
+iana_registered_encodings = ["gzip", "compress", "deflate", "identity", "br"]
+
+
+class HttpRequestParseError(Exception):
+    pass
 
 
 class WSGIRequestHandler:
@@ -29,11 +39,11 @@ class WSGIRequestHandler:
             raise TypeError(
                 "The wsgi app specified %s is not a valid WSGI application.", str(app)
             )
-        self.handle(request, app)
+        self.handle(app)
 
     def get_environ(self):
         env = self.server.get_environ().copy()
-        env["REQUEST_METHOD"] = self.method
+        env["REQUEST_METHOD"] = self.method.upper()
         env["SERVER_PROTOCOL"] = self.http_version
         env["wsgi.input"] = io.BytesIO(self.data)
 
@@ -42,7 +52,7 @@ class WSGIRequestHandler:
         else:
             env["PATH_INFO"] = self.path
 
-        for key, value in self.headers:
+        for key, value in self.headers.items():
             env[str("HTTP_" + key.replace("-", "_").upper())] = value
 
         if "HTTP_CONTENT_LENGTH" in env:
@@ -53,13 +63,17 @@ class WSGIRequestHandler:
 
         return env
 
-    def handle(self, request, application):
-        req_data = request.recv(1024)
+    def send_error(self, code):
+        status = HTTPStatus(value=code)
+        self.request.sendall(b"HTTP/1.1 {status.value} {status.name}\r\n")
+
+    def handle(self, application):
+        req_data = self.request.recv(1024)
 
         if not req_data:
             return
 
-        raw_data = req_data.decode("utf-8")
+        raw_data = req_data
 
         self.parse_request(raw_data)
 
@@ -69,7 +83,26 @@ class WSGIRequestHandler:
 
         if env.get("HTTP_EXPECT", "") == "100-continue":
             res = env["SERVER_PROTOCOL"] + " 100 Continue\r\n\r\n"
-            request.sendall(res.encode())
+            self.request.sendall(res.encode())
+
+        try:
+            self.parsed_encodings = self.parse_encodings(
+                env.get("HTTP_ACCEPT_ENCODING", "")
+            )
+            is_acceptable = any(
+                [encoding in self.parsed_encodings for encoding in acceptable_encodings]
+            )
+            if not is_acceptable:
+                logger.debug(
+                    "None of the encodings are supported out of: %s",
+                    self.parsed_encodings,
+                )
+                self.send_error(code=HTTPStatus.NOT_ACCEPTABLE)
+                return
+        except HttpRequestParseError as exc:
+            logger.debug("Could not accept encoding: Reason: %s", str(exc))
+            self.send_error(code=HTTPStatus.NOT_ACCEPTABLE)
+            return
 
         if env.get("CONTENT_LENGTH"):
             size = int(env.get("CONTENT_LENGTH", "0")) - len(self.data)
@@ -81,14 +114,14 @@ class WSGIRequestHandler:
             logger.debug("Receiving data of size {0} in parts {1}".format(size, parts))
 
             for part in parts:
-                packet = request.recv(part)
+                packet = self.request.recv(part)
                 if not packet:
                     break
                 env["wsgi.input"].write(packet)
             env["wsgi.input"].seek(0)
 
         result = application(env, self.start_response)
-        self.finish_response(result, request)
+        self.finish_response(result)
 
         logger.info(
             '%s [%s] "%s %s %s" %s -',
@@ -100,22 +133,113 @@ class WSGIRequestHandler:
             self.status,
         )
 
+    @staticmethod
+    def parse_encodings(encodings: str):
+        """
+        Accept-Encoding: compress, gzip
+        Accept-Encoding:
+        Accept-Encoding: *
+        Accept-Encoding: compress;q=0.5, gzip;q=1.0
+        Accept-Encoding: gzip;q=1.0, identity; q=0.5, *;q=0
+        """
+        if encodings.strip().replace(" ", "") == "":
+            return ["identity"]
+
+        def parse_encoding(encoding):
+            value = 0.01
+            encoding = encoding.strip().replace(" ", "")
+            if ";q=" in encoding:
+                enc, _, value = encoding.partition(";q=")
+                if not enc or not value:
+                    raise HttpRequestParseError(
+                        "Missing enc or value. Found enc=%s, value=%s", enc, value
+                    )
+                value = float(value)
+            else:
+                enc = encoding
+            return enc, value
+
+        raw_encodings = [part for part in encodings.split(",") if part]
+        if len(raw_encodings) == 0:
+            raise HttpRequestParseError("Empty values")
+
+        parsed_encodings = {}  # encoding: value
+        rejected_encodings = []
+        pos = 0
+
+        logger.debug(raw_encodings)
+        while pos < len(raw_encodings):
+            encoding = raw_encodings[pos]
+            enc, qvalue = parse_encoding(encoding)
+            if "*" == enc:
+                # this is always at the end of content-coding
+                if len(raw_encodings) - 1 != pos:
+                    raise HttpRequestParseError(
+                        f"Assumed '*' to be at the end. Found at {pos} split"
+                    )
+                if qvalue == 0:
+                    rejected_encodings.append(
+                        [
+                            encoding
+                            for encoding in acceptable_encodings
+                            if encoding not in parsed_encodings.keys()
+                        ]
+                    )
+                else:
+                    parsed_encodings.update(
+                        {
+                            acceptable_encoding: qvalue
+                            for acceptable_encoding in acceptable_encodings
+                        }
+                    )
+                break
+            else:
+                if qvalue == 0:
+                    rejected_encodings.append(enc)
+                else:
+                    parsed_encodings[enc] = max(qvalue, parsed_encodings.get(enc, 0))
+            pos += 1
+
+        # remove not acceptable encodings
+        parsed_encodings = {
+            key: value
+            for key, value in parsed_encodings.items()
+            if key not in rejected_encodings
+        }
+        # sort encodings based on qvalue
+        parsed_encodings = OrderedDict(
+            sorted(parsed_encodings.items(), key=lambda kv: kv[1], reverse=True)
+        )
+
+        if not all(
+            [encoding in iana_registered_encodings for encoding in parsed_encodings]
+        ):
+            raise HttpRequestParseError(
+                "Unknown encoding in %s. Allowed encodings: %s",
+                parsed_encodings,
+                iana_registered_encodings,
+            )
+
+        return list(parsed_encodings.keys())
+
     def parse_request(self, req):
         lines = req.splitlines()
-        request_line = lines[0]
+        request_line = lines[0].decode("utf-8")
 
         self.method, self.path, self.http_version = request_line.rstrip("\r\n").split()
 
-        self.headers = []
+        self.headers = {}
         pos = 1
-        while True:
-            line = lines[pos]
+        while pos < len(lines):
+            line = lines[pos].decode("utf-8")
             pos += 1
             if ":" not in line:
                 break
-            self.headers.append(line.strip().replace(" ", "").split(":", 1))
+            key, value = line.strip().replace(" ", "").split(":", 1)
+            self.headers[key] = value
 
-        self.data = "".join(line.strip() for line in lines[pos:]).encode()
+        data = "".join(line.decode("utf-8").strip() for line in lines[pos:])
+        self.data = data.encode()
 
     def start_response(self, status, response_headers, exc_info=None):
         self.datetime = datetime.datetime.now(tz=datetime.timezone.utc).strftime(
@@ -129,7 +253,7 @@ class WSGIRequestHandler:
             "Please do not use write() function.\n %s", data
         )
 
-    def finish_response(self, result, request):
+    def finish_response(self, result):
         self.status, response_headers = self.headers_set
         response = f"HTTP/1.1 {self.status}\r\n"
         for header in response_headers:
@@ -137,13 +261,29 @@ class WSGIRequestHandler:
 
         message_body = "".join(data.decode("utf-8") for data in result)
 
-        response += "Content-Length: {}\r\n".format(len(message_body))
+        message_bytes = message_body.encode()
+
+        for encoding in self.parsed_encodings:
+            if encoding == "gzip":
+                import gzip
+
+                response += "Content-Encoding: gzip\r\n"
+                message_bytes = gzip.compress(message_bytes)
+                break
+            elif encoding == "identity":
+                # identity: same as without any encoding
+                break
+        else:
+            raise Exception("Not expected to be here.")
+
+        response += "Content-Length: {}\r\n".format(len(message_bytes))
         response += "\r\n"
-        response += message_body
+        response_bytes = response.encode()
+
+        response_bytes += message_bytes
 
         logger.debug("".join(f"> {line}\n" for line in response.splitlines()))
-        response_bytes = response.encode()
-        request.sendall(response_bytes)
+        self.request.sendall(response_bytes)
 
 
 class WSGIServer:
